@@ -1,6 +1,6 @@
 # Proyecto de Inteligencia Artificial
 
-Este repositorio contiene implementaciones de algoritmos de inteligencia artificial desarrollados para el curso de Ciberdefensa, Semestre 9.
+Este repositorio contiene implementaciones de algoritmos de inteligencia artificial desarrollados para el curso de IA.
 
 
 
