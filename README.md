@@ -1,30 +1,10 @@
-# Proyecto de Inteligencia Artificial
+# Juego Isolation con Algoritmo Alpha-Beta
 
-Este repositorio contiene implementaciones de algoritmos de inteligencia artificial desarrollados para el curso de Ciberdefensa, Semestre 9.
+Este repositorio contiene la implementación del juego Isolation con inteligencia artificial usando algoritmo Alpha-Beta pruning, desarrollado para el curso de Ciberdefensa, Semestre 9.
 
 ## Contenido del Proyecto
 
-### 1. Algoritmo Genético para el Problema de la Mochila
-**Archivo:** `Copia_de_AI_GeneticAlgorithm_KnacksackProblem.ipynb`
-
-Implementación de un algoritmo genético para resolver el problema clásico de la mochila (knapsack problem).
-
-**Características:**
-- Generación de población inicial aleatoria
-- Selección por método de la ruleta
-- Cruce de un punto (one-point crossover)
-- Mutación de un bit
-- Función de fitness que maximiza el valor total
-- Visualización de la evolución del fitness a través de las generaciones
-
-**Parámetros configurables:**
-- Tamaño de la población
-- Número de generaciones
-- Probabilidad de mutación
-- Probabilidad de cruce
-- Capacidad de la mochila
-
-### 2. Juego de Aislamiento con Algoritmo Alpha-Beta
+### Juego de Aislamiento con Algoritmo Alpha-Beta
 **Archivo:** `Isolation_alpha_betav2.ipynb`
 
 Implementación del juego Isolation con inteligencia artificial usando algoritmo Alpha-Beta pruning.
@@ -34,7 +14,7 @@ Implementación del juego Isolation con inteligencia artificial usando algoritmo
 - Algoritmo Minimax con poda Alpha-Beta
 - Heurística adaptativa (ofensiva-defensiva)
 - Interfaz gráfica con pygame
-- Optimizaciones de memoria para mayor profundidad de búsqueda
+- Contador de nodos explorados en versión consola
 
 **Estrategias de IA:**
 - **Estrategia Ofensiva:** Maximiza la movilidad propia (>12 casillas disponibles)
@@ -42,9 +22,7 @@ Implementación del juego Isolation con inteligencia artificial usando algoritmo
 
 **Modos de juego disponibles:**
 1. `play_isolation_gui_optimized()` - Interfaz gráfica con imágenes personalizadas
-2. `play_isolation_gui()` - Interfaz gráfica estándar
-3. `play_isolation_optimized()` - Consola optimizada (depth 4)
-4. `play_isolation()` - Versión original por consola
+2. `play_isolation()` - Versión por consola con contador de nodos explorados
 
 ### Recursos Gráficos
 **Directorio:** `game_assets/`
@@ -66,9 +44,6 @@ pip install -r requirements.txt
 
 ## Uso
 
-### Algoritmo Genético
-Abre el notebook `Copia_de_AI_GeneticAlgorithm_KnacksackProblem.ipynb` en Jupyter y ejecuta las celdas secuencialmente. Puedes modificar los parámetros del algoritmo en las celdas correspondientes.
-
 ### Juego de Aislamiento
 Abre el notebook `Isolation_alpha_betav2.ipynb` y ejecuta las celdas. Para iniciar el juego, usa una de las funciones disponibles:
 
@@ -76,8 +51,8 @@ Abre el notebook `Isolation_alpha_betav2.ipynb` y ejecuta las celdas. Para inici
 # Juego con gráficos personalizados (recomendado)
 play_isolation_gui_optimized()
 
-# Juego por consola optimizado
-play_isolation_optimized()
+# Juego por consola con contador de nodos
+play_isolation()
 ```
 
 ## Dependencias Principales
@@ -92,17 +67,28 @@ play_isolation_optimized()
 
 ## Algoritmos Implementados
 
-### Algoritmo Genético
-- **Selección:** Método de la ruleta
-- **Cruce:** Un punto (one-point crossover)
-- **Mutación:** Flip de un bit
-- **Función objetivo:** Maximización del valor total respetando la capacidad
-
 ### Alpha-Beta Pruning
 - **Búsqueda:** Minimax con poda alpha-beta
 - **Heurística:** Evaluación de movilidad con control del centro
-- **Optimizaciones:** Tabla de transposición y gestión de memoria
-- **Profundidad:** Configurable (depth 3-4 recomendado)
+- **Profundidad:** Configurable (depth 2-3 recomendado)
+- **Métricas:** Contador de nodos explorados para análisis de rendimiento
+
+## Reglas del Juego
+
+El Isolation es un juego de estrategia para dos jugadores:
+
+1. **Objetivo:** Ser el último jugador que pueda moverse
+2. **Tablero:** 5x5 casillas
+3. **Movimientos:** Tipo rey (8 direcciones)
+4. **Turno completo:** Mover ficha + eliminar una casilla
+5. **Victoria:** El oponente no puede moverse
+
+## Características Técnicas
+
+- **Evita superposición:** Las fichas no pueden ocupar la misma casilla
+- **Cambio de estrategia:** La IA adapta su estrategia según casillas disponibles
+- **Interfaz visual:** Tablero cambia de color según la estrategia (rojo/azul)
+- **Análisis de rendimiento:** Muestra nodos explorados en versión consola
 
 ## Autor
 
@@ -115,3 +101,4 @@ Ciberdefensa - Semestre 9
 - El juego Isolation incluye validaciones para evitar superposición de fichas
 - La IA cambia automáticamente de estrategia según el estado del juego
 - Las imágenes del juego son opcionales; si no se encuentran, se usan gráficos de respaldo
+- El contador de nodos ayuda a analizar la eficiencia del algoritmo Alpha-Beta
