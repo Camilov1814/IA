@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(isolation_venvScriptsactivate)",
+      "Bash(pip install jupyter numpy matplotlib pydot queue copy)",
+      "Bash(call isolation_venvScriptsactivate.bat)",
+      "Bash(pip install jupyter numpy matplotlib pydot)",
+      "Bash(echo $0)",
+      "Bash(source isolation_venv/Scripts/activate)",
+      "Bash(python Fixed_Isolation_Game.py)",
+      "Bash(python Test_AI_vs_AI.py)",
+      "Bash(python tsp_genetico.py)",
+      "Bash(python Test_Improved_AI.py)",
+      "Bash(timeout 5s python Improved_Isolation_Game.py)",
+      "Bash(isolation_venvScriptsactivate.bat)",
+      "Bash(pip install pygame)",
+      "Bash(mkdir -p game_assets)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
