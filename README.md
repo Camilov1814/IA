@@ -2,29 +2,9 @@
 
 Este repositorio contiene implementaciones de algoritmos de inteligencia artificial desarrollados para el curso de Ciberdefensa, Semestre 9.
 
-## Contenido del Proyecto
 
-### 1. Algoritmo Genético para el Problema de la Mochila
-**Archivo:** `Copia_de_AI_GeneticAlgorithm_KnacksackProblem.ipynb`
 
-Implementación de un algoritmo genético para resolver el problema clásico de la mochila (knapsack problem).
-
-**Características:**
-- Generación de población inicial aleatoria
-- Selección por método de la ruleta
-- Cruce de un punto (one-point crossover)
-- Mutación de un bit
-- Función de fitness que maximiza el valor total
-- Visualización de la evolución del fitness a través de las generaciones
-
-**Parámetros configurables:**
-- Tamaño de la población
-- Número de generaciones
-- Probabilidad de mutación
-- Probabilidad de cruce
-- Capacidad de la mochila
-
-### 2. Juego de Aislamiento con Algoritmo Alpha-Beta
+### Juego de Aislamiento con Algoritmo Alpha-Beta
 **Archivo:** `Isolation_alpha_betav2.ipynb`
 
 Implementación del juego Isolation con inteligencia artificial usando algoritmo Alpha-Beta pruning.
@@ -66,9 +46,6 @@ pip install -r requirements.txt
 
 ## Uso
 
-### Algoritmo Genético
-Abre el notebook `Copia_de_AI_GeneticAlgorithm_KnacksackProblem.ipynb` en Jupyter y ejecuta las celdas secuencialmente. Puedes modificar los parámetros del algoritmo en las celdas correspondientes.
-
 ### Juego de Aislamiento
 Abre el notebook `Isolation_alpha_betav2.ipynb` y ejecuta las celdas. Para iniciar el juego, usa una de las funciones disponibles:
 
@@ -107,7 +84,7 @@ play_isolation_optimized()
 ## Autor
 
 Proyecto desarrollado para el curso de Inteligencia Artificial
-Ciberdefensa - Semestre 9
+
 
 ## Notas Técnicas
 
