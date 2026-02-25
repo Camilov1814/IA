@@ -1,8 +1,8 @@
 # Juego Isolation con Algoritmo Alpha-Beta
 
-Este repositorio contiene la implementación del juego Isolation con inteligencia artificial usando algoritmo Alpha-Beta pruning, desarrollado para el curso de Ciberdefensa, Semestre 9.
+Este repositorio contiene implementaciones de algoritmos de inteligencia artificial desarrollados para el curso de IA.
 
-## Contenido del Proyecto
+
 
 ### Juego de Aislamiento con Algoritmo Alpha-Beta
 **Archivo:** `Isolation_alpha_betav2.ipynb`
@@ -93,7 +93,7 @@ El Isolation es un juego de estrategia para dos jugadores:
 ## Autor
 
 Proyecto desarrollado para el curso de Inteligencia Artificial
-Ciberdefensa - Semestre 9
+
 
 ## Notas Técnicas
 
@@ -101,4 +101,3 @@ Ciberdefensa - Semestre 9
 - El juego Isolation incluye validaciones para evitar superposición de fichas
 - La IA cambia automáticamente de estrategia según el estado del juego
 - Las imágenes del juego son opcionales; si no se encuentran, se usan gráficos de respaldo
-- El contador de nodos ayuda a analizar la eficiencia del algoritmo Alpha-Beta
