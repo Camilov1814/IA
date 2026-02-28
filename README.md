@@ -1,37 +1,38 @@
-# Juego Isolation con Algoritmo Alpha-Beta
+# Juego Isolation con Fichas Individuales
 
-Este repositorio contiene implementaciones de algoritmos de inteligencia artificial desarrollados para el curso de IA.
+Este repositorio contiene la implementación del juego Isolation con inteligencia artificial usando algoritmo Alpha-Beta pruning y selección de dificultad.
 
+## Juego de Isolation con Fichas Individuales
+**Archivo:** `Isolation_Game_Individual_Tiles.py`
 
-
-### Juego de Aislamiento con Algoritmo Alpha-Beta
-**Archivo:** `Isolation_alpha_betav2.ipynb`
-
-Implementación del juego Isolation con inteligencia artificial usando algoritmo Alpha-Beta pruning.
+Implementación avanzada del juego Isolation con fichas individuales para cada jugador y múltiples niveles de dificultad.
 
 **Características:**
-- Tablero de 5x5
+- Tablero de 5x5 con fichas individuales
 - Algoritmo Minimax con poda Alpha-Beta
-- Heurística adaptativa (ofensiva-defensiva)
-- Interfaz gráfica con pygame
-- Contador de nodos explorados en versión consola
+- 4 niveles de dificultad (Fácil, Medio, Difícil, Experto)
+- Heurística adaptativa con 3 componentes principales
+- Interfaz gráfica mejorada con pygame
+- Sistema de selección de dificultad al inicio
 
-**Estrategias de IA:**
-- **Estrategia Ofensiva:** Maximiza la movilidad propia (>12 casillas disponibles)
-- **Estrategia Defensiva:** Minimiza la movilidad del oponente (≤12 casillas disponibles)
+## Componentes de la Heurística de IA
 
-**Modos de juego disponibles:**
-1. `play_isolation_gui_optimized()` - Interfaz gráfica con imágenes personalizadas
-2. `play_isolation()` - Versión por consola con contador de nodos explorados
+La inteligencia artificial utiliza una heurística avanzada con **3 componentes principales**:
 
-### Recursos Gráficos
-**Directorio:** `game_assets/`
+### 1. **Detección de Estados Terminales**
+- Identifica automáticamente finales de juego (victoria, derrota, empate)
+- Asigna valores absolutos (±200) para garantizar decisiones correctas
+- Prioridad máxima sobre otros factores
 
-Contiene las imágenes personalizadas para el juego Isolation:
-- `tableroRojo.png` - Tablero para estrategia ofensiva
-- `tableroAzul.png` - Tablero para estrategia defensiva
-- `jugador.png` - Ficha del jugador humano
-- `IA.png` - Ficha de la inteligencia artificial
+### 2. **Estrategia Adaptativa (Ofensiva/Defensiva)**
+- **Estrategia Ofensiva** (>12 casillas disponibles): Maximiza movilidad propia
+- **Estrategia Defensiva** (≤12 casillas disponibles): Restringe movilidad del oponente
+- Transición automática según el progreso del juego
+
+### 3. **Control del Centro**
+- Favorece posiciones centrales en el tablero
+- Usa distancia Manhattan al centro (posición 2,2)
+- Componente secundario que complementa la estrategia principal
 
 ## Instalación
 
@@ -39,65 +40,53 @@ Contiene las imágenes personalizadas para el juego Isolation:
 2. Instala las dependencias:
 
 ```bash
-pip install -r requirements.txt
+pip install pygame numpy
 ```
 
 ## Uso
 
-### Juego de Aislamiento
-Abre el notebook `Isolation_alpha_betav2.ipynb` y ejecuta las celdas. Para iniciar el juego, usa una de las funciones disponibles:
+### Ejecutar el Juego
+Ejecuta directamente el archivo Python:
 
-```python
-# Juego con gráficos personalizados (recomendado)
-play_isolation_gui_optimized()
-
-# Juego por consola con contador de nodos
-play_isolation()
+```bash
+python Isolation_Game_Individual_Tiles.py
 ```
 
-## Dependencias Principales
-
-- **numpy**: Operaciones numéricas y arrays
-- **pandas**: Manipulación de datos
-- **matplotlib**: Visualización básica
-- **plotly**: Gráficos interactivos
-- **pygame**: Interfaz gráfica del juego
-- **pydot**: Visualización de árboles (opcional)
-- **jupyter**: Entorno de notebooks
-
-## Algoritmos Implementados
-
-### Alpha-Beta Pruning
-- **Búsqueda:** Minimax con poda alpha-beta
-- **Heurística:** Evaluación de movilidad con control del centro
-- **Profundidad:** Configurable (depth 2-3 recomendado)
-- **Métricas:** Contador de nodos explorados para análisis de rendimiento
+Al iniciar, podrás seleccionar entre 4 niveles de dificultad:
+- **Fácil** (Profundidad 1): IA básica para principiantes
+- **Medio** (Profundidad 2): IA intermedia con mejor planificación
+- **Difícil** (Profundidad 3): IA avanzada con análisis profundo
+- **Experto** (Profundidad 4): IA máxima con estrategia superior
 
 ## Reglas del Juego
 
 El Isolation es un juego de estrategia para dos jugadores:
 
 1. **Objetivo:** Ser el último jugador que pueda moverse
-2. **Tablero:** 5x5 casillas
+2. **Tablero:** 5x5 casillas con fichas individuales
 3. **Movimientos:** Tipo rey (8 direcciones)
-4. **Turno completo:** Mover ficha + eliminar una casilla
+4. **Turno completo:** Mover ficha + eliminar una casilla del tablero
 5. **Victoria:** El oponente no puede moverse
 
-## Características Técnicas
+## Algoritmo Alpha-Beta
 
-- **Evita superposición:** Las fichas no pueden ocupar la misma casilla
-- **Cambio de estrategia:** La IA adapta su estrategia según casillas disponibles
-- **Interfaz visual:** Tablero cambia de color según la estrategia (rojo/azul)
-- **Análisis de rendimiento:** Muestra nodos explorados en versión consola
+### Características Técnicas
+- **Búsqueda:** Minimax con poda alpha-beta eficiente
+- **Heurística:** 3 componentes (terminales, estrategia adaptativa, control del centro)
+- **Profundidad:** Variable según dificultad (1-4 niveles)
+- **Optimización:** Prevención de superposición y estados inválidos
+
+### Análisis de Rendimiento por Dificultad
+- **Fácil (Depth 1):** ~20-50 nodos explorados (instantáneo)
+- **Medio (Depth 2):** ~500-1000 nodos explorados (rápido)
+- **Difícil (Depth 3):** ~5000-15000 nodos explorados (tiempo razonable)
+- **Experto (Depth 4):** >50000 nodos explorados (fuerte pero más lento)
+
+## Dependencias
+
+- **pygame**: Interfaz gráfica del juego
+- **numpy**: Operaciones numéricas y matrices
 
 ## Autor
 
 Proyecto desarrollado para el curso de Inteligencia Artificial
-
-
-## Notas Técnicas
-
-- Los notebooks están optimizados para Google Colab pero funcionan en cualquier entorno Jupyter
-- El juego Isolation incluye validaciones para evitar superposición de fichas
-- La IA cambia automáticamente de estrategia según el estado del juego
-- Las imágenes del juego son opcionales; si no se encuentran, se usan gráficos de respaldo
