@@ -9,9 +9,16 @@ __pycache__/
 
 # Virtual environments
 isolation_venv/
+nao_env/
 venv/
 env/
 ENV/
+
+# NAO SDK / binaries
+NAO/
+
+# Documentos Word
+*.docx
 
 # IDE files
 .vscode/

@@ -4,6 +4,146 @@ import threading
 import time
 import os
 import copy
+import paramiko
+
+# ─── NAO Speech Integration ───────────────────────────────────────────────────
+# Configura la IP y credenciales de tu robot NAO aquí.
+NAO_IP       = "172.16.18.25"
+NAO_USER     = "nao"
+NAO_PASSWORD = "nao"          # Contraseña por defecto del NAO
+
+class NaoSpeaker:
+    """
+    Comunica el juego con el robot NAO via SSH.
+    Ejecuta comandos en el propio Python 2.7 + naoqi del robot.
+    Si el robot no está disponible, el juego sigue funcionando sin errores.
+    """
+    def __init__(self, ip, user, password):
+        self.ip       = ip
+        self.user     = user
+        self.password = password
+        self.disponible = False
+        self._connect()
+
+    def _connect(self):
+        """Verifica la conexion SSH al robot al iniciar."""
+        try:
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            ssh.connect(self.ip, username=self.user,
+                        password=self.password, timeout=5,
+                        allow_agent=False, look_for_keys=False)
+            ssh.close()
+            self.disponible = True
+            print(f"[NAO] Conectado via SSH en {self.ip}")
+        except Exception as e:
+            print(f"[NAO] No se pudo conectar ({e}). El juego funciona sin robot.")
+
+    def say(self, text):
+        """Dice el texto en segundo plano sin bloquear (para 'Pensando...')."""
+        if self.disponible:
+            threading.Thread(target=self._say_ssh, args=(text, False), daemon=True).start()
+
+    def say_blocking(self, text):
+        """Dice el texto y espera a que NAO termine antes de continuar."""
+        if self.disponible:
+            self._say_ssh(text, wait=True)
+
+    def celebrate(self):
+        """Dice que ganó y ejecuta animación de celebración. No bloqueante."""
+        if self.disponible:
+            threading.Thread(target=self._celebrate_ssh, daemon=True).start()
+
+    def _celebrate_ssh(self):
+        """
+        1. Sube dance-moves.mp3 al robot via SFTP.
+        2. NAO habla, reproduce el audio desde sus altavoces
+           y baila al mismo tiempo.
+        """
+        mp3_local  = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                   "dance-moves.mp3")
+        mp3_remoto = "/home/nao/dance-moves.mp3"
+
+        cmd = (
+            "python -c \""
+            "import naoqi; "
+            "tts = naoqi.ALProxy('ALTextToSpeech',    '127.0.0.1', 9559); "
+            "ap  = naoqi.ALProxy('ALAudioPlayer',     '127.0.0.1', 9559); "
+            "bm  = naoqi.ALProxy('ALBehaviorManager', '127.0.0.1', 9559); "
+            "tts.setLanguage('Spanish'); "
+            "tts.say('Gane. No tienes mas movimientos posibles.'); "
+            "ap.post.playFile('/home/nao/dance-moves.mp3'); "
+            "bm.runBehavior('animations/Stand/Gestures/Enthusiastic_4')"
+            "\""
+        )
+        try:
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            ssh.connect(self.ip, username=self.user,
+                        password=self.password, timeout=5,
+                        allow_agent=False, look_for_keys=False)
+
+            # Subir el mp3 al robot
+            if os.path.exists(mp3_local):
+                sftp = ssh.open_sftp()
+                sftp.put(mp3_local, mp3_remoto)
+                sftp.close()
+
+            _, stdout, _ = ssh.exec_command(cmd)
+            stdout.channel.recv_exit_status()
+            ssh.close()
+            print("[NAO] Celebración completada.")
+        except Exception as e:
+            print(f"[NAO] Error en celebración: {e}")
+
+    def _say_ssh(self, text, wait=False):
+        """
+        Ejecuta ALTextToSpeech.say en el robot via SSH.
+        wait=True: bloquea hasta que NAO termina de hablar.
+        wait=False: lanza el comando y retorna inmediatamente.
+        """
+        cmd = (
+            f"python -c \""
+            f"import naoqi; "
+            f"tts = naoqi.ALProxy('ALTextToSpeech', '127.0.0.1', 9559); "
+            f"tts.setLanguage('Spanish'); "
+            f"tts.say('{text}')"
+            f"\""
+        )
+        try:
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            ssh.connect(self.ip, username=self.user,
+                        password=self.password, timeout=5,
+                        allow_agent=False, look_for_keys=False)
+            _, stdout, _ = ssh.exec_command(cmd)
+            if wait:
+                stdout.channel.recv_exit_status()  # Espera a que termine el speech
+            ssh.close()
+        except Exception as e:
+            print(f"[NAO] Error al hablar: {e}")
+
+# Instancia global del NAO (se conecta al iniciar el script)
+nao = NaoSpeaker(NAO_IP, NAO_USER, NAO_PASSWORD)
+
+# Nombres de columnas y filas para que NAO hable de forma natural
+COLUMNAS = {0: "A", 1: "B", 2: "C", 3: "D", 4: "E"}
+FILAS    = {0: "1", 1: "2", 2: "3", 3: "4", 4: "5"}
+
+def casilla_nombre(pos):
+    """Convierte (fila, col) a 'A1', 'B3', etc."""
+    r, c = pos
+    return f"{COLUMNAS[c]}{FILAS[r]}"
+
+def detectar_casilla_eliminada(board_antes, board_despues, pos1, pos2):
+    """Compara dos tableros y devuelve la casilla que fue eliminada, si existe."""
+    for r in range(5):
+        for c in range(5):
+            if board_antes[r][c] == 1 and board_despues[r][c] == 0:
+                if (r, c) != pos1 and (r, c) != pos2:
+                    return (r, c)
+    return None
+# ──────────────────────────────────────────────────────────────────────────────
 
 # Import the AI classes from the notebook (we'll need to copy them here)
 class Node():
@@ -309,6 +449,7 @@ class IsolationGameWithDifficulty:
         self.game_phase = "move"
         self.removable_cells = []
         self.ai_thinking = False
+        self.nao_message = ""        # Último mensaje que dijo o está diciendo NAO
         self.last_nodes_explored = 0
         self.last_processing_time = 0.0
 
@@ -410,6 +551,7 @@ class IsolationGameWithDifficulty:
         self.human_turn = True
         self.selected_pos = None
         self.game_phase = "move"
+        self.nao_message = ""
         self.last_nodes_explored = 0
         self.last_processing_time = 0.0
 
@@ -554,6 +696,14 @@ class IsolationGameWithDifficulty:
         status_rect = status_text.get_rect(center=(self.width//2, 60))
         self.screen.blit(status_text, status_rect)
 
+        # Mensaje NAO (lo que dijo o está diciendo el robot)
+        if self.nao_message:
+            nao_color = self.DARK_GRAY if not self.ai_thinking else self.RED
+            prefijo = "🤖 NAO: " if not self.ai_thinking else "🤖 NAO dice: "
+            nao_text = self.tiny_font.render(f"{prefijo}{self.nao_message}", True, nao_color)
+            nao_rect = nao_text.get_rect(center=(self.width//2, 110))
+            self.screen.blit(nao_text, nao_rect)
+
         # Strategy indicator
         if not self.game_over:
             current_cells = sum(sum(row) for row in self.game_state['board'])
@@ -631,9 +781,15 @@ class IsolationGameWithDifficulty:
             self.game_over = True
             self.winner = "human"
             self.ai_thinking = False
+            self.nao_message = "No tengo movimientos. ¡Ganaste!"
+            nao.say_blocking("No tengo movimientos posibles. ¡Ganaste! Felicidades.")
             return
 
-        # Use selected difficulty depth
+        # ── 1. NAO dice "Pensando" mientras corre el alpha-beta ──────────────
+        self.nao_message = "Pensando..."
+        nao.say("Pensando")   # No bloqueante: se reproduce durante el cálculo
+
+        # ── 2. Calcular mejor movimiento ─────────────────────────────────────
         depth = self.difficulties[self.current_difficulty]['depth']
 
         ia_state = copy.deepcopy(self.game_state)
@@ -655,11 +811,36 @@ class IsolationGameWithDifficulty:
         self.last_processing_time = end_time - start_time
 
         if best_child:
-            new_state = copy.deepcopy(best_child.state)
+            # ── 3. Preparar el nuevo estado (aún sin aplicar al tablero) ─────
+            board_antes = [row[:] for row in self.game_state['board']]
+            new_state   = copy.deepcopy(best_child.state)
+
+            pos2_nueva   = new_state['pos2']
+            casilla_elim = detectar_casilla_eliminada(
+                board_antes, new_state['board'],
+                new_state['pos1'], pos2_nueva
+            )
+
+            # ── 4. Construir y mostrar mensaje en UI ─────────────────────────
+            destino = casilla_nombre(pos2_nueva)
+            if casilla_elim:
+                eliminada = casilla_nombre(casilla_elim)
+                mensaje = f"Me muevo a {destino}. Elimino la casilla {eliminada}."
+            else:
+                mensaje = f"Me muevo a {destino}."
+
+            self.nao_message = mensaje
+            print(f"[NAO] {mensaje}")
+
+            # ── 5. NAO habla el movimiento (BLOQUEANTE) ───────────────────────
+            # El tablero solo se actualiza DESPUÉS de que NAO termina de hablar
+            nao.say_blocking(mensaje)
+
+            # ── 6. Ahora sí se aplica el nuevo estado al tablero ─────────────
             self.game_state = {
                 'board': new_state['board'],
-                'pos1': new_state['pos1'],
-                'pos2': new_state['pos2'],
+                'pos1':  new_state['pos1'],
+                'pos2':  new_state['pos2'],
                 'max_turn': True
             }
 
@@ -674,6 +855,8 @@ class IsolationGameWithDifficulty:
         if not valid_moves_human:
             self.game_over = True
             self.winner = "ai"
+            self.nao_message = "¡Gané! 🎉"
+            nao.celebrate()
 
     def update_valid_moves(self):
         if self.human_turn and self.game_phase == "move" and not self.game_over:
@@ -683,6 +866,8 @@ class IsolationGameWithDifficulty:
             if not self.valid_moves:
                 self.game_over = True
                 self.winner = "ai"
+                self.nao_message = "¡Gané! No tienes movimientos posibles."
+                nao.celebrate()
 
     def handle_difficulty_selection(self, event):
         """Handle difficulty selection input"""
