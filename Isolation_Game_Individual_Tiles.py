@@ -730,6 +730,21 @@ class IsolationGameWithDifficulty:
         current_cells = sum(sum(row) for row in board)
         tile = self.red_tile if current_cells > 12 else self.blue_tile
 
+        col_labels = ["A", "B", "C", "D", "E"]
+        row_labels  = ["1", "2", "3", "4", "5"]
+
+        for c in range(5):
+            x = self.board_offset_x + c * self.cell_size + self.cell_size // 2
+            y = self.board_offset_y - 18
+            lbl = self.small_font.render(col_labels[c], True, self.DARK_GRAY)
+            self.screen.blit(lbl, lbl.get_rect(center=(x, y)))
+
+        for r in range(5):
+            x = self.board_offset_x - 18
+            y = self.board_offset_y + r * self.cell_size + self.cell_size // 2
+            lbl = self.small_font.render(row_labels[r], True, self.DARK_GRAY)
+            self.screen.blit(lbl, lbl.get_rect(center=(x, y)))
+
         for r in range(5):
             for c in range(5):
                 x, y = self.board_to_screen((r, c))
@@ -1018,6 +1033,20 @@ class IsolationGameWithDifficulty:
                 self.nao_message = "I win! You have no valid moves."
                 nao.celebrate()
 
+    # ── Game intro (runs in background thread) ────────────────────────────────
+    def game_intro(self, difficulty_name):
+        """NAO announces the difficulty and explains how to play."""
+        nao.say_blocking(
+            f"Difficulty set to {difficulty_name}. "
+            "Welcome to Isolation! Here is how to play. "
+            "On your turn, say the column using the NATO alphabet and then the row number. "
+            "Columns are alpha, bravo, charlie, delta, and echo. "
+            "Rows are one through five. "
+            "For example, say alpha three to move to column A, row three. "
+            "After moving, say another position to block that cell. "
+            "The player who cannot move loses. Good luck!"
+        )
+
     # ── Difficulty selection ──────────────────────────────────────────────────
     def handle_difficulty_selection(self, event):
         if event.type == pygame.KEYDOWN:
@@ -1025,12 +1054,16 @@ class IsolationGameWithDifficulty:
             idx  = keys.index(self.current_difficulty)
             if event.key == pygame.K_UP:
                 self.current_difficulty = keys[(idx - 1) % len(keys)]
+                nao.say(self.difficulties[self.current_difficulty]['name'])
             elif event.key == pygame.K_DOWN:
                 self.current_difficulty = keys[(idx + 1) % len(keys)]
+                nao.say(self.difficulties[self.current_difficulty]['name'])
             elif event.key == pygame.K_RETURN:
                 self.game_started = True
                 self.reset_game()
-                print(f"Starting game — difficulty: {self.difficulties[self.current_difficulty]['name']}")
+                diff_name = self.difficulties[self.current_difficulty]['name']
+                print(f"Starting game — difficulty: {diff_name}")
+                threading.Thread(target=self.game_intro, args=(diff_name,), daemon=True).start()
             elif event.key == pygame.K_ESCAPE:
                 return False
         return True
