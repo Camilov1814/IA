@@ -1,32 +1,83 @@
 import pygame
-import sys
 import threading
 import time
 import os
 import copy
 import paramiko
 
-# ─── NAO Speech Integration ───────────────────────────────────────────────────
-# Configura la IP y credenciales de tu robot NAO aquí.
-NAO_IP       = "172.16.18.25"
+# ─── NAO Configuration ────────────────────────────────────────────────────────
+NAO_IP       = "172.16.10.47"
 NAO_USER     = "nao"
-NAO_PASSWORD = "nao"          # Contraseña por defecto del NAO
+NAO_PASSWORD = "nao"
 
+# ─── Voice vocabulary ─────────────────────────────────────────────────────────
+# Positions are spoken using the NATO phonetic alphabet + number:
+#   "alpha one" = A1, "bravo three" = B3, "charlie five" = C5, etc.
+NUMEROS_TEXTO    = {"1": "one", "2": "two", "3": "three", "4": "four", "5": "five"}
+LETRAS_FONETICAS = {"A": "alpha", "B": "bravo", "C": "charlie", "D": "delta", "E": "echo"}
+CONFIRMACION     = ["yes", "no"]
+
+VOCAB_POSICIONES_HABLADAS = []
+for _col in ["A", "B", "C", "D", "E"]:
+    for _row in ["1", "2", "3", "4", "5"]:
+        VOCAB_POSICIONES_HABLADAS.append(f"{LETRAS_FONETICAS[_col]} {NUMEROS_TEXTO[_row]}")
+
+# spoken ("alpha one") → board label ("A1")
+HABLADO_A_POSICION = {}
+_idx = 0
+for _col in ["A", "B", "C", "D", "E"]:
+    for _row in ["1", "2", "3", "4", "5"]:
+        HABLADO_A_POSICION[VOCAB_POSICIONES_HABLADAS[_idx]] = f"{_col}{_row}"
+        _idx += 1
+
+# board label ("A1") → board position (row, col)
+POSICION_A_BOARD = {}
+for _ci, _cl in enumerate(["A", "B", "C", "D", "E"]):
+    for _ri in range(5):
+        POSICION_A_BOARD[f"{_cl}{_ri+1}"] = (_ri, _ci)
+
+# Column/row label maps
+COLUMNAS = {0: "A", 1: "B", 2: "C", 3: "D", 4: "E"}
+FILAS    = {0: "1", 1: "2", 2: "3", 3: "4", 4: "5"}
+
+
+def cell_name(pos):
+    """Converts board position (row, col) to label like 'A1', 'B3'."""
+    r, c = pos
+    return f"{COLUMNAS[c]}{FILAS[r]}"
+
+
+def cell_spoken(pos):
+    """Converts board position (row, col) to NATO spoken form like 'alpha one'."""
+    r, c = pos
+    return f"{LETRAS_FONETICAS[COLUMNAS[c]]} {NUMEROS_TEXTO[FILAS[r]]}"
+
+
+def detect_removed_cell(board_before, board_after, pos1, pos2):
+    """Returns the cell that was removed between two board states, if any."""
+    for r in range(5):
+        for c in range(5):
+            if board_before[r][c] == 1 and board_after[r][c] == 0:
+                if (r, c) != pos1 and (r, c) != pos2:
+                    return (r, c)
+    return None
+
+
+# ─── NAO Speaker & Listener ───────────────────────────────────────────────────
 class NaoSpeaker:
     """
-    Comunica el juego con el robot NAO via SSH.
-    Ejecuta comandos en el propio Python 2.7 + naoqi del robot.
-    Si el robot no está disponible, el juego sigue funcionando sin errores.
+    Connects the game to the NAO robot via SSH.
+    Runs commands using NAO's own Python 2.7 + naoqi.
+    If the robot is unavailable, the game continues without errors.
     """
     def __init__(self, ip, user, password):
         self.ip       = ip
         self.user     = user
         self.password = password
-        self.disponible = False
+        self.available = False
         self._connect()
 
     def _connect(self):
-        """Verifica la conexion SSH al robot al iniciar."""
         try:
             ssh = paramiko.SSHClient()
             ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -34,79 +85,28 @@ class NaoSpeaker:
                         password=self.password, timeout=5,
                         allow_agent=False, look_for_keys=False)
             ssh.close()
-            self.disponible = True
-            print(f"[NAO] Conectado via SSH en {self.ip}")
+            self.available = True
+            print(f"[NAO] Connected via SSH at {self.ip}")
         except Exception as e:
-            print(f"[NAO] No se pudo conectar ({e}). El juego funciona sin robot.")
+            print(f"[NAO] Could not connect ({e}). Game runs without robot.")
 
+    # ── Text-to-speech ────────────────────────────────────────────────────────
     def say(self, text):
-        """Dice el texto en segundo plano sin bloquear (para 'Pensando...')."""
-        if self.disponible:
+        """Non-blocking TTS — fires and forgets."""
+        if self.available:
             threading.Thread(target=self._say_ssh, args=(text, False), daemon=True).start()
 
     def say_blocking(self, text):
-        """Dice el texto y espera a que NAO termine antes de continuar."""
-        if self.disponible:
+        """Blocking TTS — waits until NAO finishes speaking."""
+        if self.available:
             self._say_ssh(text, wait=True)
 
-    def celebrate(self):
-        """Dice que ganó y ejecuta animación de celebración. No bloqueante."""
-        if self.disponible:
-            threading.Thread(target=self._celebrate_ssh, daemon=True).start()
-
-    def _celebrate_ssh(self):
-        """
-        1. Sube dance-moves.mp3 al robot via SFTP.
-        2. NAO habla, reproduce el audio desde sus altavoces
-           y baila al mismo tiempo.
-        """
-        mp3_local  = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                   "dance-moves.mp3")
-        mp3_remoto = "/home/nao/dance-moves.mp3"
-
-        cmd = (
-            "python -c \""
-            "import naoqi; "
-            "tts = naoqi.ALProxy('ALTextToSpeech',    '127.0.0.1', 9559); "
-            "ap  = naoqi.ALProxy('ALAudioPlayer',     '127.0.0.1', 9559); "
-            "bm  = naoqi.ALProxy('ALBehaviorManager', '127.0.0.1', 9559); "
-            "tts.setLanguage('Spanish'); "
-            "tts.say('Gane. No tienes mas movimientos posibles.'); "
-            "ap.post.playFile('/home/nao/dance-moves.mp3'); "
-            "bm.runBehavior('animations/Stand/Gestures/Enthusiastic_4')"
-            "\""
-        )
-        try:
-            ssh = paramiko.SSHClient()
-            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            ssh.connect(self.ip, username=self.user,
-                        password=self.password, timeout=5,
-                        allow_agent=False, look_for_keys=False)
-
-            # Subir el mp3 al robot
-            if os.path.exists(mp3_local):
-                sftp = ssh.open_sftp()
-                sftp.put(mp3_local, mp3_remoto)
-                sftp.close()
-
-            _, stdout, _ = ssh.exec_command(cmd)
-            stdout.channel.recv_exit_status()
-            ssh.close()
-            print("[NAO] Celebración completada.")
-        except Exception as e:
-            print(f"[NAO] Error en celebración: {e}")
-
     def _say_ssh(self, text, wait=False):
-        """
-        Ejecuta ALTextToSpeech.say en el robot via SSH.
-        wait=True: bloquea hasta que NAO termina de hablar.
-        wait=False: lanza el comando y retorna inmediatamente.
-        """
         cmd = (
             f"python -c \""
             f"import naoqi; "
             f"tts = naoqi.ALProxy('ALTextToSpeech', '127.0.0.1', 9559); "
-            f"tts.setLanguage('Spanish'); "
+            f"tts.setLanguage('English'); "
             f"tts.say('{text}')"
             f"\""
         )
@@ -118,34 +118,173 @@ class NaoSpeaker:
                         allow_agent=False, look_for_keys=False)
             _, stdout, _ = ssh.exec_command(cmd)
             if wait:
-                stdout.channel.recv_exit_status()  # Espera a que termine el speech
+                stdout.channel.recv_exit_status()
             ssh.close()
         except Exception as e:
-            print(f"[NAO] Error al hablar: {e}")
+            print(f"[NAO] Speech error: {e}")
 
-# Instancia global del NAO (se conecta al iniciar el script)
+    # ── Celebration ───────────────────────────────────────────────────────────
+    def celebrate(self):
+        """Non-blocking celebration: speech + audio + dance."""
+        if self.available:
+            threading.Thread(target=self._celebrate_ssh, daemon=True).start()
+
+    def _celebrate_ssh(self):
+        mp3_local  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dance-moves.mp3")
+        mp3_remote = "/home/nao/dance-moves.mp3"
+        cmd = (
+            "python -c \""
+            "import naoqi; "
+            "tts = naoqi.ALProxy('ALTextToSpeech',    '127.0.0.1', 9559); "
+            "ap  = naoqi.ALProxy('ALAudioPlayer',     '127.0.0.1', 9559); "
+            "bm  = naoqi.ALProxy('ALBehaviorManager', '127.0.0.1', 9559); "
+            "tts.setLanguage('English'); "
+            "tts.say('I won! You have no more moves.'); "
+            "ap.post.playFile('/home/nao/dance-moves.mp3'); "
+            "bm.runBehavior('animations/Stand/Gestures/Enthusiastic_4')"
+            "\""
+        )
+        try:
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            ssh.connect(self.ip, username=self.user,
+                        password=self.password, timeout=5,
+                        allow_agent=False, look_for_keys=False)
+            if os.path.exists(mp3_local):
+                sftp = ssh.open_sftp()
+                sftp.put(mp3_local, mp3_remote)
+                sftp.close()
+            _, stdout, _ = ssh.exec_command(cmd)
+            stdout.channel.recv_exit_status()
+            ssh.close()
+            print("[NAO] Celebration complete.")
+        except Exception as e:
+            print(f"[NAO] Celebration error: {e}")
+
+    # ── Voice recognition ─────────────────────────────────────────────────────
+    def listen(self, vocabulario, timeout_sec=15):
+        """
+        Listens for one word/phrase from the given vocabulary.
+        Writes a temp Python 2.7 script to the NAO and runs it via SSH.
+        Returns the matched vocabulary item, or None on timeout.
+        """
+        if not self.available:
+            return None
+
+        vocab_str = str(vocabulario)
+        script = (
+            "import naoqi\n"
+            "import time\n"
+            "\n"
+            "IP = '127.0.0.1'\n"
+            "PORT = 9559\n"
+            "\n"
+            "asr = naoqi.ALProxy('ALSpeechRecognition', IP, PORT)\n"
+            "mem = naoqi.ALProxy('ALMemory', IP, PORT)\n"
+            "\n"
+            "asr.setLanguage('English')\n"
+            "\n"
+            "try:\n"
+            "    asr.unsubscribe('IsolationASR')\n"
+            "except:\n"
+            "    pass\n"
+            "\n"
+            "asr.pause(True)\n"
+            f"asr.setVocabulary({vocab_str}, True)\n"
+            "asr.subscribe('IsolationASR')\n"
+            "asr.pause(False)\n"
+            "\n"
+            "mem.insertData('WordRecognized', [])\n"
+            "time.sleep(1.0)\n"
+            "\n"
+            "resultado = None\n"
+            "t0 = time.time()\n"
+            f"while time.time() - t0 < {timeout_sec}:\n"
+            "    val = mem.getData('WordRecognized')\n"
+            "    if val and len(val) >= 2 and val[1] > 0.25:\n"
+            "        resultado = val[0]\n"
+            "        break\n"
+            "    time.sleep(0.3)\n"
+            "\n"
+            "asr.pause(True)\n"
+            "asr.unsubscribe('IsolationASR')\n"
+            "asr.pause(False)\n"
+            "\n"
+            "if resultado:\n"
+            "    print('RECOGNIZED:' + resultado)\n"
+            "else:\n"
+            "    print('RECOGNIZED:NONE')\n"
+        )
+        try:
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            ssh.connect(self.ip, username=self.user,
+                        password=self.password, timeout=5,
+                        allow_agent=False, look_for_keys=False)
+            sftp = ssh.open_sftp()
+            with sftp.open('/tmp/nao_asr.py', 'w') as f:
+                f.write(script)
+            sftp.close()
+            _, stdout, stderr = ssh.exec_command('python /tmp/nao_asr.py',
+                                                 timeout=timeout_sec + 15)
+            output = stdout.read().decode().strip()
+            errors = stderr.read().decode().strip()
+            ssh.close()
+            if errors:
+                print(f"  [WARN] ASR: {errors}")
+            for line in output.split('\n'):
+                if line.startswith('RECOGNIZED:'):
+                    raw = line.split('RECOGNIZED:')[1].strip()
+                    if not raw or raw == 'NONE':
+                        return None
+                    raw_lower = raw.lower()
+                    for v in vocabulario:
+                        if v in raw_lower:
+                            print(f"[NAO] Heard: '{v}'")
+                            return v
+                    return None
+        except Exception as e:
+            print(f"[NAO] Listen error: {e}")
+        return None
+
+    def ask_and_confirm(self, question, vocabulario, mapeo=None, max_attempts=3):
+        """
+        Full ask → listen → confirm loop via voice.
+        Returns the confirmed mapped value (e.g. 'A3'), or None if unsuccessful.
+        """
+        for attempt in range(1, max_attempts + 1):
+            print(f"[NAO] Attempt {attempt}/{max_attempts}")
+            self.say_blocking(question)
+            time.sleep(1.5)
+
+            recognized = self.listen(vocabulario)
+            if recognized is None:
+                self.say_blocking("I did not understand. Please try again.")
+                continue
+
+            value = mapeo[recognized] if (mapeo and recognized in mapeo) else recognized
+
+            self.say_blocking(f"I heard {value}. Is that correct?")
+            time.sleep(1.5)
+
+            confirm = self.listen(CONFIRMACION, timeout_sec=10)
+            if confirm and "yes" in confirm.lower():
+                self.say_blocking(f"Perfect. {value} confirmed.")
+                return value
+            elif confirm and "no" in confirm.lower():
+                self.say_blocking("Alright, let me ask again.")
+            else:
+                self.say_blocking("I did not understand your confirmation. Let me ask again.")
+
+        self.say_blocking("I could not understand. Please use the mouse to make your move.")
+        return None
+
+
+# Global NAO instance (connects at startup)
 nao = NaoSpeaker(NAO_IP, NAO_USER, NAO_PASSWORD)
 
-# Nombres de columnas y filas para que NAO hable de forma natural
-COLUMNAS = {0: "A", 1: "B", 2: "C", 3: "D", 4: "E"}
-FILAS    = {0: "1", 1: "2", 2: "3", 3: "4", 4: "5"}
 
-def casilla_nombre(pos):
-    """Convierte (fila, col) a 'A1', 'B3', etc."""
-    r, c = pos
-    return f"{COLUMNAS[c]}{FILAS[r]}"
-
-def detectar_casilla_eliminada(board_antes, board_despues, pos1, pos2):
-    """Compara dos tableros y devuelve la casilla que fue eliminada, si existe."""
-    for r in range(5):
-        for c in range(5):
-            if board_antes[r][c] == 1 and board_despues[r][c] == 0:
-                if (r, c) != pos1 and (r, c) != pos2:
-                    return (r, c)
-    return None
-# ──────────────────────────────────────────────────────────────────────────────
-
-# Import the AI classes from the notebook (we'll need to copy them here)
+# ─── AI classes ───────────────────────────────────────────────────────────────
 class Node():
     def __init__(self, state, value, operators, operator=None, parent=None, objective=None):
         self.state = state
@@ -173,7 +312,7 @@ class Node():
         return [
             self.getState(i)
             if not self.repeatStatePath(self.getState(i))
-            else None for i, op in enumerate(self.operators)
+            else None for i, _ in enumerate(self.operators)
         ]
 
     def getState(self, index):
@@ -311,7 +450,7 @@ class NodeIsolation(Node):
         is_max = self._max_turn()
 
         current = pos1 if is_max else pos2
-        other = pos2 if is_max else pos1
+        other   = pos2 if is_max else pos1
 
         moves = self._valid_moves(current, board, other)
         if not moves:
@@ -321,9 +460,7 @@ class NodeIsolation(Node):
         for (nr, nc) in moves:
             new_pos1 = (nr, nc) if is_max else pos1
             new_pos2 = pos2     if is_max else (nr, nc)
-
             removable = self._removable_cells(board, new_pos1, new_pos2)
-
             if not removable:
                 children_states.append({
                     'board':    [row[:] for row in board],
@@ -341,7 +478,6 @@ class NodeIsolation(Node):
                         'pos2':     new_pos2,
                         'max_turn': not is_max,
                     })
-
         return children_states
 
     def getState(self, index):
@@ -353,7 +489,7 @@ class NodeIsolation(Node):
         pos2    = self._pos2()
         is_max  = self._max_turn()
         current = pos1 if is_max else pos2
-        other = pos2 if is_max else pos1
+        other   = pos2 if is_max else pos1
         return len(self._valid_moves(current, board, other)) == 0
 
     def offensive(self, playerMoves, opponentMoves):
@@ -396,118 +532,95 @@ class NodeIsolation(Node):
         return self.level
 
 
+# ─── Game ─────────────────────────────────────────────────────────────────────
 class IsolationGameWithDifficulty:
     def __init__(self, width=600, height=700):
         pygame.init()
 
-        self.width = width
+        self.width  = width
         self.height = height
         self.screen = pygame.display.set_mode((width, height))
         pygame.display.set_caption("Isolation Game - Individual Tiles")
 
-        # Board configuration
-        self.board_size = 5
-        self.cell_size = 80
+        self.board_size    = 5
+        self.cell_size     = 80
         self.board_offset_x = (width - self.board_size * self.cell_size) // 2
         self.board_offset_y = 150
 
-        # Load individual tile images
         self.load_tile_images()
 
-        # Fonts
-        self.font = pygame.font.Font(None, 36)
+        self.font       = pygame.font.Font(None, 36)
         self.small_font = pygame.font.Font(None, 24)
-        self.tiny_font = pygame.font.Font(None, 20)
+        self.tiny_font  = pygame.font.Font(None, 20)
 
-        # Colors
-        self.WHITE = (255, 255, 255)
-        self.BLACK = (0, 0, 0)
-        self.GREEN = (0, 255, 0)
-        self.RED = (255, 0, 0)
-        self.BLUE = (0, 0, 255)
+        self.WHITE      = (255, 255, 255)
+        self.BLACK      = (0, 0, 0)
+        self.GREEN      = (0, 255, 0)
+        self.RED        = (255, 0, 0)
+        self.BLUE       = (0, 0, 255)
         self.LIGHT_GRAY = (200, 200, 200)
-        self.YELLOW = (255, 255, 0)
-        self.DARK_GRAY = (100, 100, 100)
+        self.YELLOW     = (255, 255, 0)
+        self.DARK_GRAY  = (100, 100, 100)
 
-        # Difficulty settings
         self.difficulties = {
-            "Fácil": {"depth": 1, "name": "FÁCIL"},
-            "Medio": {"depth": 2, "name": "MEDIO"},
-            "Difícil": {"depth": 3, "name": "DIFÍCIL"},
-            "Imposible": {"depth": 4, "name": "IMPOSIBLE"}
+            "Easy":       {"depth": 1, "name": "EASY"},
+            "Medium":     {"depth": 2, "name": "MEDIUM"},
+            "Hard":       {"depth": 3, "name": "HARD"},
+            "Impossible": {"depth": 4, "name": "IMPOSSIBLE"},
         }
-
-        self.current_difficulty = "Medio"  # Default
+        self.current_difficulty = "Medium"
         self.game_started = False
 
-        # Game state
         self.reset_game()
 
-        # UI state
-        self.selected_pos = None
-        self.valid_moves = []
-        self.game_phase = "move"
+        self.selected_pos  = None
+        self.valid_moves   = []
+        self.game_phase    = "move"
         self.removable_cells = []
-        self.ai_thinking = False
-        self.nao_message = ""        # Último mensaje que dijo o está diciendo NAO
-        self.last_nodes_explored = 0
+        self.ai_thinking   = False
+        self.voice_thinking = False   # True while human voice-input thread is running
+        self.nao_message   = ""
+        self.last_nodes_explored  = 0
         self.last_processing_time = 0.0
 
+    # ── Asset loading ─────────────────────────────────────────────────────────
     def load_tile_images(self):
-        """Load individual tile images (blueTile.png and redTile.png)"""
-        print("Loading individual tile images...")
-
         assets_dir = "game_assets"
-
         try:
-            # Load blue and red tiles
-            blue_tile_path = os.path.join(assets_dir, "blueTile.png")
-            red_tile_path = os.path.join(assets_dir, "redTile.png")
+            blue_path = os.path.join(assets_dir, "blueTile.png")
+            red_path  = os.path.join(assets_dir, "redTile.png")
 
-            if os.path.exists(blue_tile_path):
-                blue_original = pygame.image.load(blue_tile_path)
-                self.blue_tile = pygame.transform.scale(blue_original, (self.cell_size, self.cell_size))
-                print("Blue tile loaded successfully")
+            if os.path.exists(blue_path):
+                self.blue_tile = pygame.transform.scale(pygame.image.load(blue_path), (self.cell_size, self.cell_size))
             else:
-                print(f"Blue tile not found: {blue_tile_path}")
                 self.create_fallback_blue_tile()
 
-            if os.path.exists(red_tile_path):
-                red_original = pygame.image.load(red_tile_path)
-                self.red_tile = pygame.transform.scale(red_original, (self.cell_size, self.cell_size))
-                print("Red tile loaded successfully")
+            if os.path.exists(red_path):
+                self.red_tile = pygame.transform.scale(pygame.image.load(red_path), (self.cell_size, self.cell_size))
             else:
-                print(f"Red tile not found: {red_tile_path}")
                 self.create_fallback_red_tile()
 
-            # Load player pieces
             jugador_path = os.path.join(assets_dir, "jugador.png")
-            ia_path = os.path.join(assets_dir, "IA.png")
+            ia_path      = os.path.join(assets_dir, "IA.png")
 
             if os.path.exists(jugador_path):
-                player_original = pygame.image.load(jugador_path)
-                self.player1_piece = pygame.transform.scale(player_original, (self.cell_size, self.cell_size))
-                print("Player piece loaded successfully")
+                self.player1_piece = pygame.transform.scale(pygame.image.load(jugador_path), (self.cell_size, self.cell_size))
             else:
                 self.create_fallback_player1_piece()
 
             if os.path.exists(ia_path):
-                ia_original = pygame.image.load(ia_path)
-                self.player2_piece = pygame.transform.scale(ia_original, (self.cell_size, self.cell_size))
-                print("AI piece loaded successfully")
+                self.player2_piece = pygame.transform.scale(pygame.image.load(ia_path), (self.cell_size, self.cell_size))
             else:
                 self.create_fallback_player2_piece()
 
-            # Create blocked cell (black)
             self.blocked_cell = pygame.Surface((self.cell_size, self.cell_size))
             self.blocked_cell.fill((20, 20, 20))
 
-            # Create overlays
             self.valid_move_overlay = pygame.Surface((self.cell_size, self.cell_size), pygame.SRCALPHA)
-            self.valid_move_overlay.fill((0, 255, 0, 100))  # Green transparent
+            self.valid_move_overlay.fill((0, 255, 0, 100))
 
             self.removable_overlay = pygame.Surface((self.cell_size, self.cell_size), pygame.SRCALPHA)
-            self.removable_overlay.fill((255, 255, 0, 100))  # Yellow transparent
+            self.removable_overlay.fill((255, 255, 0, 100))
 
         except Exception as e:
             print(f"Error loading images: {e}")
@@ -523,36 +636,34 @@ class IsolationGameWithDifficulty:
 
     def create_fallback_player1_piece(self):
         self.player1_piece = pygame.Surface((self.cell_size, self.cell_size), pygame.SRCALPHA)
-        center = self.cell_size // 2
-        pygame.draw.circle(self.player1_piece, (200, 100, 255), (center, center), 30)
+        pygame.draw.circle(self.player1_piece, (200, 100, 255), (self.cell_size//2, self.cell_size//2), 30)
 
     def create_fallback_player2_piece(self):
         self.player2_piece = pygame.Surface((self.cell_size, self.cell_size), pygame.SRCALPHA)
-        center = self.cell_size // 2
-        pygame.draw.circle(self.player2_piece, (255, 150, 50), (center, center), 30)
+        pygame.draw.circle(self.player2_piece, (255, 150, 50), (self.cell_size//2, self.cell_size//2), 30)
 
     def create_fallback_graphics(self):
-        print("Creating fallback graphics...")
         self.create_fallback_blue_tile()
         self.create_fallback_red_tile()
         self.create_fallback_player1_piece()
         self.create_fallback_player2_piece()
 
+    # ── Game state ────────────────────────────────────────────────────────────
     def reset_game(self):
-        """Reset game state"""
         self.game_state = {
-            'board': [[1]*5 for _ in range(5)],
-            'pos1': (0, 2),  # Player (X)
-            'pos2': (4, 2),  # AI (O)
-            'max_turn': True  # Player's turn
+            'board':    [[1]*5 for _ in range(5)],
+            'pos1':     (0, 2),   # Human player
+            'pos2':     (4, 2),   # AI
+            'max_turn': True
         }
-        self.game_over = False
-        self.winner = None
-        self.human_turn = True
-        self.selected_pos = None
-        self.game_phase = "move"
-        self.nao_message = ""
-        self.last_nodes_explored = 0
+        self.game_over      = False
+        self.winner         = None
+        self.human_turn     = True
+        self.voice_thinking = False
+        self.selected_pos   = None
+        self.game_phase     = "move"
+        self.nao_message    = ""
+        self.last_nodes_explored  = 0
         self.last_processing_time = 0.0
 
     def get_valid_moves(self, pos, board, other_pos=None):
@@ -573,188 +684,147 @@ class IsolationGameWithDifficulty:
             if board[r][c] == 1 and (r,c) != pos1 and (r,c) != pos2
         ]
 
+    # ── Coordinate helpers ────────────────────────────────────────────────────
     def screen_to_board(self, screen_pos):
         x, y = screen_pos
-        board_x = (x - self.board_offset_x) // self.cell_size
-        board_y = (y - self.board_offset_y) // self.cell_size
-
-        if 0 <= board_x < 5 and 0 <= board_y < 5:
-            return (board_y, board_x)
+        bx = (x - self.board_offset_x) // self.cell_size
+        by = (y - self.board_offset_y) // self.cell_size
+        if 0 <= bx < 5 and 0 <= by < 5:
+            return (by, bx)
         return None
 
     def board_to_screen(self, board_pos):
         r, c = board_pos
-        x = self.board_offset_x + c * self.cell_size
-        y = self.board_offset_y + r * self.cell_size
-        return (x, y)
+        return (self.board_offset_x + c * self.cell_size,
+                self.board_offset_y + r * self.cell_size)
 
+    # ── Drawing ───────────────────────────────────────────────────────────────
     def draw_difficulty_selection(self):
-        """Draw difficulty selection screen"""
         self.screen.fill(self.WHITE)
+        title = self.font.render("ISOLATION - Select Difficulty", True, self.BLACK)
+        self.screen.blit(title, title.get_rect(center=(self.width//2, 100)))
 
-        # Title
-        title = self.font.render("ISOLATION - Selecciona Dificultad", True, self.BLACK)
-        title_rect = title.get_rect(center=(self.width//2, 100))
-        self.screen.blit(title, title_rect)
-
-        # Difficulty options
         y_start = 200
-        for i, (diff_key, diff_info) in enumerate(self.difficulties.items()):
-            y_pos = y_start + i * 60
+        for i, (key, info) in enumerate(self.difficulties.items()):
+            y = y_start + i * 60
+            if key == self.current_difficulty:
+                rect = pygame.Rect(self.width//2 - 150, y - 20, 300, 50)
+                pygame.draw.rect(self.screen, self.LIGHT_GRAY, rect)
+                pygame.draw.rect(self.screen, self.BLACK, rect, 2)
+            text = self.small_font.render(f"{info['name']} (Depth {info['depth']})", True, self.BLACK)
+            self.screen.blit(text, text.get_rect(center=(self.width//2, y)))
 
-            # Highlight current selection
-            if diff_key == self.current_difficulty:
-                highlight_rect = pygame.Rect(self.width//2 - 150, y_pos - 20, 300, 50)
-                pygame.draw.rect(self.screen, self.LIGHT_GRAY, highlight_rect)
-                pygame.draw.rect(self.screen, self.BLACK, highlight_rect, 2)
-
-            # Difficulty text
-            diff_text = f"{diff_info['name']} (Depth {diff_info['depth']})"
-            text_surface = self.small_font.render(diff_text, True, self.BLACK)
-            text_rect = text_surface.get_rect(center=(self.width//2, y_pos))
-            self.screen.blit(text_surface, text_rect)
-
-        # Instructions
         instructions = [
-            "Use las flechas ARRIBA/ABAJO para seleccionar",
-            "Presiona ENTER para comenzar el juego",
-            "Presiona ESC para salir"
+            "Use UP/DOWN arrows to select difficulty",
+            "Press ENTER to start the game",
+            "Press ESC to quit",
         ]
-
-        for i, instruction in enumerate(instructions):
-            y_pos = 450 + i * 30
-            text = self.tiny_font.render(instruction, True, self.DARK_GRAY)
-            text_rect = text.get_rect(center=(self.width//2, y_pos))
-            self.screen.blit(text, text_rect)
+        for i, inst in enumerate(instructions):
+            text = self.tiny_font.render(inst, True, self.DARK_GRAY)
+            self.screen.blit(text, text.get_rect(center=(self.width//2, 450 + i * 30)))
 
     def draw_board(self):
-        """Draw the game board using individual tile images"""
         board = self.game_state['board']
-        pos1 = self.game_state['pos1']
-        pos2 = self.game_state['pos2']
-
-        # Choose tile color based on available cells (strategy indicator)
+        pos1  = self.game_state['pos1']
+        pos2  = self.game_state['pos2']
         current_cells = sum(sum(row) for row in board)
-        tile_image = self.red_tile if current_cells > 12 else self.blue_tile
+        tile = self.red_tile if current_cells > 12 else self.blue_tile
 
         for r in range(5):
             for c in range(5):
                 x, y = self.board_to_screen((r, c))
-
-                if board[r][c] == 0:  # Blocked cell
+                if board[r][c] == 0:
                     self.screen.blit(self.blocked_cell, (x, y))
                 else:
-                    # Draw tile
-                    self.screen.blit(tile_image, (x, y))
-
-                    # Overlays
+                    self.screen.blit(tile, (x, y))
                     if (r, c) in self.valid_moves:
                         self.screen.blit(self.valid_move_overlay, (x, y))
                     elif (r, c) in self.removable_cells:
                         self.screen.blit(self.removable_overlay, (x, y))
-
-                # Draw pieces
                 if (r, c) == pos1:
                     self.screen.blit(self.player1_piece, (x, y))
                 elif (r, c) == pos2:
                     self.screen.blit(self.player2_piece, (x, y))
 
     def draw_game_ui(self):
-        """Draw game UI"""
         # Title
-        title = f"ISOLATION - {self.difficulties[self.current_difficulty]['name']}"
-        title_text = self.font.render(title, True, self.BLACK)
-        title_rect = title_text.get_rect(center=(self.width//2, 30))
-        self.screen.blit(title_text, title_rect)
+        title_text = self.font.render(
+            f"ISOLATION - {self.difficulties[self.current_difficulty]['name']}", True, self.BLACK)
+        self.screen.blit(title_text, title_text.get_rect(center=(self.width//2, 30)))
 
-        # Game status
+        # Status
         if self.game_over:
             if self.winner == "human":
-                status = "¡GANASTE! 🎉"
-                color = self.GREEN
+                status, color = "YOU WIN!", self.GREEN
             elif self.winner == "ai":
-                status = "IA GANÓ 🤖"
-                color = self.RED
+                status, color = "AI WINS!", self.RED
             else:
-                status = "EMPATE"
-                color = self.BLACK
+                status, color = "DRAW", self.BLACK
         elif self.ai_thinking:
             depth = self.difficulties[self.current_difficulty]['depth']
-            status = f"IA pensando... (Depth {depth})"
-            color = self.RED
+            status, color = f"AI thinking... (Depth {depth})", self.RED
+        elif self.voice_thinking:
+            if self.game_phase == "move":
+                status = "Your turn - Say your move (e.g. alpha three)"
+            else:
+                status = "Your turn - Say the cell to block"
+            color = self.BLUE
         elif self.human_turn:
             if self.game_phase == "move":
-                status = "Tu turno - Selecciona movimiento"
+                status = "Your turn - Click or speak your move"
             else:
-                status = "Tu turno - Elimina una celda"
+                status = "Your turn - Click or speak to block a cell"
             color = self.BLUE
         else:
-            status = "Turno de la IA"
-            color = self.RED
+            status, color = "AI turn", self.RED
 
         status_text = self.small_font.render(status, True, color)
-        status_rect = status_text.get_rect(center=(self.width//2, 60))
-        self.screen.blit(status_text, status_rect)
+        self.screen.blit(status_text, status_text.get_rect(center=(self.width//2, 60)))
 
-        # Mensaje NAO (lo que dijo o está diciendo el robot)
+        # NAO message
         if self.nao_message:
-            nao_color = self.DARK_GRAY if not self.ai_thinking else self.RED
-            prefijo = "🤖 NAO: " if not self.ai_thinking else "🤖 NAO dice: "
-            nao_text = self.tiny_font.render(f"{prefijo}{self.nao_message}", True, nao_color)
-            nao_rect = nao_text.get_rect(center=(self.width//2, 110))
-            self.screen.blit(nao_text, nao_rect)
+            nao_text = self.tiny_font.render(f"NAO: {self.nao_message}", True, self.DARK_GRAY)
+            self.screen.blit(nao_text, nao_text.get_rect(center=(self.width//2, 110)))
 
         # Strategy indicator
         if not self.game_over:
             current_cells = sum(sum(row) for row in self.game_state['board'])
-            strategy = "OFENSIVA" if current_cells > 12 else "DEFENSIVA"
-            tile_color = "ROJO" if current_cells > 12 else "AZUL"
-
-            strategy_text = self.small_font.render(
-                f"IA: {current_cells} casillas → {strategy} | Tiles {tile_color}",
-                True, self.BLACK
-            )
-            strategy_rect = strategy_text.get_rect(center=(self.width//2, 85))
-            self.screen.blit(strategy_text, strategy_rect)
+            strategy  = "OFFENSIVE" if current_cells > 12 else "DEFENSIVE"
+            tile_color = "RED" if current_cells > 12 else "BLUE"
+            strat_text = self.small_font.render(
+                f"AI: {current_cells} cells -> {strategy} | Tiles {tile_color}", True, self.BLACK)
+            self.screen.blit(strat_text, strat_text.get_rect(center=(self.width//2, 85)))
 
         # Performance metrics
         if self.last_nodes_explored > 0:
-            metrics_text = self.tiny_font.render(
-                f"📊 Último movimiento IA: {self.last_nodes_explored} nodos | {self.last_processing_time:.3f}s",
-                True, self.DARK_GRAY
-            )
-            metrics_rect = metrics_text.get_rect(center=(self.width//2, self.height - 50))
-            self.screen.blit(metrics_text, metrics_rect)
+            metrics = self.tiny_font.render(
+                f"Last AI move: {self.last_nodes_explored} nodes | {self.last_processing_time:.3f}s",
+                True, self.DARK_GRAY)
+            self.screen.blit(metrics, metrics.get_rect(center=(self.width//2, self.height - 50)))
 
         # Instructions
         if self.game_over:
-            instructions = ["Presiona R para reiniciar", "Presiona D para cambiar dificultad", "Presiona ESC para salir"]
+            instructions = ["Press R to restart", "Press D to change difficulty", "Press ESC to quit"]
         else:
-            instructions = ["Haz clic para mover/eliminar", "Presiona D para cambiar dificultad"]
+            instructions = ["Click or speak to move/block", "Press D to change difficulty"]
 
         y_offset = self.board_offset_y + 5 * self.cell_size + 30
-        for i, instruction in enumerate(instructions):
-            inst_text = self.small_font.render(instruction, True, self.BLACK)
-            inst_rect = inst_text.get_rect(center=(self.width//2, y_offset + i * 25))
-            self.screen.blit(inst_text, inst_rect)
+        for i, inst in enumerate(instructions):
+            text = self.small_font.render(inst, True, self.BLACK)
+            self.screen.blit(text, text.get_rect(center=(self.width//2, y_offset + i * 25)))
 
+    # ── Human turn: mouse input ───────────────────────────────────────────────
     def handle_human_move(self, board_pos):
-        """Handle human player move"""
+        """Apply a human move from mouse click."""
         if self.game_phase == "move":
             if board_pos in self.valid_moves:
                 self.game_state['pos1'] = board_pos
-
                 self.removable_cells = self.get_removable_cells(
-                    self.game_state['board'],
-                    self.game_state['pos1'],
-                    self.game_state['pos2']
-                )
-
+                    self.game_state['board'], self.game_state['pos1'], self.game_state['pos2'])
                 if self.removable_cells:
                     self.game_phase = "remove"
                 else:
                     self.end_human_turn()
-
         elif self.game_phase == "remove":
             if board_pos in self.removable_cells:
                 r, c = board_pos
@@ -763,99 +833,178 @@ class IsolationGameWithDifficulty:
 
     def end_human_turn(self):
         self.game_state['max_turn'] = False
-        self.human_turn = False
-        self.game_phase = "move"
-        self.valid_moves = []
+        self.human_turn     = False
+        self.voice_thinking = False
+        self.game_phase     = "move"
+        self.valid_moves    = []
         self.removable_cells = []
 
-    def ai_move(self):
-        """Execute AI move with selected difficulty"""
-        self.ai_thinking = True
+    # ── Human turn: voice input ───────────────────────────────────────────────
+    def human_voice_move(self):
+        """
+        Runs in a background thread.
+        Asks the human for their move and block via voice, then applies them.
+        Falls back gracefully to mouse if NAO is unavailable or voice fails.
+        """
+        self.voice_thinking = True
 
-        pos2 = self.game_state['pos2']
-        pos1 = self.game_state['pos1']
+        pos1  = self.game_state['pos1']
+        pos2  = self.game_state['pos2']
         board = self.game_state['board']
-        valid_moves_ai = self.get_valid_moves(pos2, board, pos1)
+        valid = self.get_valid_moves(pos1, board, pos2)
 
-        if not valid_moves_ai:
-            self.game_over = True
-            self.winner = "human"
-            self.ai_thinking = False
-            self.nao_message = "No tengo movimientos. ¡Ganaste!"
-            nao.say_blocking("No tengo movimientos posibles. ¡Ganaste! Felicidades.")
+        if not valid:
+            self.game_over  = True
+            self.winner     = "ai"
+            self.nao_message = "I win! You have no valid moves."
+            nao.celebrate()
+            self.voice_thinking = False
             return
 
-        # ── 1. NAO dice "Pensando" mientras corre el alpha-beta ──────────────
-        self.nao_message = "Pensando..."
-        nao.say("Pensando")   # No bloqueante: se reproduce durante el cálculo
+        # ── Ask for move position ─────────────────────────────────────────────
+        board_pos = None
+        while board_pos is None:
+            if self.game_over:
+                self.voice_thinking = False
+                return
 
-        # ── 2. Calcular mejor movimiento ─────────────────────────────────────
+            label = nao.ask_and_confirm(
+                "Which position do you want to move your piece to? "
+                "Say the NATO letter and number, for example alpha three.",
+                VOCAB_POSICIONES_HABLADAS,
+                HABLADO_A_POSICION,
+            )
+
+            if label is None:
+                # Voice failed — let player use mouse
+                self.nao_message = "Voice failed. Use the mouse to move."
+                self.voice_thinking = False
+                return
+
+            candidate = POSICION_A_BOARD.get(label)
+            if candidate is None or candidate not in valid:
+                spoken_valid = ", ".join(cell_spoken(m) for m in valid[:4])
+                nao.say_blocking(
+                    f"{label} is not a valid move. "
+                    f"Valid positions include {spoken_valid}. Please try again."
+                )
+            else:
+                board_pos = candidate
+
+        # Apply move
+        self.game_state['pos1'] = board_pos
+        self.nao_message = f"Player moved to {cell_name(board_pos)}"
+        self.valid_moves = []
+
+        # ── Ask for cell to block ─────────────────────────────────────────────
+        removable = self.get_removable_cells(
+            self.game_state['board'], self.game_state['pos1'], self.game_state['pos2'])
+
+        if removable:
+            self.removable_cells = removable
+            self.game_phase = "remove"
+
+            block_pos = None
+            while block_pos is None:
+                if self.game_over:
+                    self.voice_thinking = False
+                    return
+
+                label = nao.ask_and_confirm(
+                    "Which cell do you want to block? Say the NATO letter and number.",
+                    VOCAB_POSICIONES_HABLADAS,
+                    HABLADO_A_POSICION,
+                )
+
+                if label is None:
+                    self.nao_message = "Voice failed. Click the cell to block."
+                    self.voice_thinking = False
+                    return
+
+                candidate = POSICION_A_BOARD.get(label)
+                if candidate is None or candidate not in removable:
+                    nao.say_blocking(f"{label} cannot be blocked. Please choose another cell.")
+                else:
+                    block_pos = candidate
+
+            r, c = block_pos
+            self.game_state['board'][r][c] = 0
+            self.nao_message = f"Player blocked {cell_name(block_pos)}"
+
+        self.end_human_turn()
+
+    # ── AI turn ───────────────────────────────────────────────────────────────
+    def ai_move(self):
+        self.ai_thinking = True
+
+        pos2  = self.game_state['pos2']
+        pos1  = self.game_state['pos1']
+        board = self.game_state['board']
+        valid_ai = self.get_valid_moves(pos2, board, pos1)
+
+        if not valid_ai:
+            self.game_over   = True
+            self.winner      = "human"
+            self.ai_thinking = False
+            self.nao_message = "I have no moves. You win!"
+            nao.say_blocking("I have no valid moves. You win! Congratulations.")
+            return
+
+        self.nao_message = "Thinking..."
+        nao.say("Thinking")
+
         depth = self.difficulties[self.current_difficulty]['depth']
-
         ia_state = copy.deepcopy(self.game_state)
         ia_state['max_turn'] = False
 
-        root = NodeIsolation(
-            state=ia_state,
-            value='root',
-            operators=['mover+eliminar'],
-            player=False,
-        )
+        root = NodeIsolation(state=ia_state, value='root',
+                             operators=['move+remove'], player=False)
 
         start_time = time.time()
-        tree = Tree(root=root, operators=['mover+eliminar'])
+        tree = Tree(root=root, operators=['move+remove'])
         best_child = tree.alphaBeta(depth=depth)
         end_time = time.time()
 
-        self.last_nodes_explored = tree.nodes_explored
+        self.last_nodes_explored  = tree.nodes_explored
         self.last_processing_time = end_time - start_time
 
         if best_child:
-            # ── 3. Preparar el nuevo estado (aún sin aplicar al tablero) ─────
-            board_antes = [row[:] for row in self.game_state['board']]
-            new_state   = copy.deepcopy(best_child.state)
+            board_before = [row[:] for row in self.game_state['board']]
+            new_state    = copy.deepcopy(best_child.state)
+            pos2_new     = new_state['pos2']
+            removed      = detect_removed_cell(board_before, new_state['board'],
+                                               new_state['pos1'], pos2_new)
 
-            pos2_nueva   = new_state['pos2']
-            casilla_elim = detectar_casilla_eliminada(
-                board_antes, new_state['board'],
-                new_state['pos1'], pos2_nueva
-            )
-
-            # ── 4. Construir y mostrar mensaje en UI ─────────────────────────
-            destino = casilla_nombre(pos2_nueva)
-            if casilla_elim:
-                eliminada = casilla_nombre(casilla_elim)
-                mensaje = f"Me muevo a {destino}. Elimino la casilla {eliminada}."
+            dest = cell_name(pos2_new)
+            dest_spoken = cell_spoken(pos2_new)
+            if removed:
+                removed_spoken = cell_spoken(removed)
+                message = f"I move to {dest_spoken}. I block {removed_spoken}."
+                ui_msg  = f"AI moved to {dest}. Blocked {cell_name(removed)}."
             else:
-                mensaje = f"Me muevo a {destino}."
+                message = f"I move to {dest_spoken}."
+                ui_msg  = f"AI moved to {dest}."
 
-            self.nao_message = mensaje
-            print(f"[NAO] {mensaje}")
+            self.nao_message = ui_msg
+            print(f"[NAO] {ui_msg}")
+            nao.say_blocking(message)
 
-            # ── 5. NAO habla el movimiento (BLOQUEANTE) ───────────────────────
-            # El tablero solo se actualiza DESPUÉS de que NAO termina de hablar
-            nao.say_blocking(mensaje)
-
-            # ── 6. Ahora sí se aplica el nuevo estado al tablero ─────────────
             self.game_state = {
-                'board': new_state['board'],
-                'pos1':  new_state['pos1'],
-                'pos2':  new_state['pos2'],
-                'max_turn': True
+                'board':    new_state['board'],
+                'pos1':     new_state['pos1'],
+                'pos2':     new_state['pos2'],
+                'max_turn': True,
             }
 
-        self.human_turn = True
+        self.human_turn  = True
         self.ai_thinking = False
 
-        # Check if human has valid moves
         pos1_new = self.game_state['pos1']
         pos2_new = self.game_state['pos2']
-        valid_moves_human = self.get_valid_moves(pos1_new, self.game_state['board'], pos2_new)
-
-        if not valid_moves_human:
-            self.game_over = True
-            self.winner = "ai"
-            self.nao_message = "¡Gané! 🎉"
+        if not self.get_valid_moves(pos1_new, self.game_state['board'], pos2_new):
+            self.game_over   = True
+            self.winner      = "ai"
+            self.nao_message = "I win!"
             nao.celebrate()
 
     def update_valid_moves(self):
@@ -864,47 +1013,37 @@ class IsolationGameWithDifficulty:
             pos2 = self.game_state['pos2']
             self.valid_moves = self.get_valid_moves(pos1, self.game_state['board'], pos2)
             if not self.valid_moves:
-                self.game_over = True
-                self.winner = "ai"
-                self.nao_message = "¡Gané! No tienes movimientos posibles."
+                self.game_over   = True
+                self.winner      = "ai"
+                self.nao_message = "I win! You have no valid moves."
                 nao.celebrate()
 
+    # ── Difficulty selection ──────────────────────────────────────────────────
     def handle_difficulty_selection(self, event):
-        """Handle difficulty selection input"""
         if event.type == pygame.KEYDOWN:
+            keys = list(self.difficulties.keys())
+            idx  = keys.index(self.current_difficulty)
             if event.key == pygame.K_UP:
-                difficulty_list = list(self.difficulties.keys())
-                current_index = difficulty_list.index(self.current_difficulty)
-                new_index = (current_index - 1) % len(difficulty_list)
-                self.current_difficulty = difficulty_list[new_index]
-
+                self.current_difficulty = keys[(idx - 1) % len(keys)]
             elif event.key == pygame.K_DOWN:
-                difficulty_list = list(self.difficulties.keys())
-                current_index = difficulty_list.index(self.current_difficulty)
-                new_index = (current_index + 1) % len(difficulty_list)
-                self.current_difficulty = difficulty_list[new_index]
-
+                self.current_difficulty = keys[(idx + 1) % len(keys)]
             elif event.key == pygame.K_RETURN:
                 self.game_started = True
                 self.reset_game()
-                print(f"Iniciando juego con dificultad: {self.difficulties[self.current_difficulty]['name']}")
-                print(f"Depth de IA: {self.difficulties[self.current_difficulty]['depth']}")
-
+                print(f"Starting game — difficulty: {self.difficulties[self.current_difficulty]['name']}")
             elif event.key == pygame.K_ESCAPE:
                 return False
-
         return True
 
+    # ── Main loop ─────────────────────────────────────────────────────────────
     def run(self):
-        """Main game loop"""
-        clock = pygame.time.Clock()
+        clock   = pygame.time.Clock()
         running = True
 
-        print("Isolation Game con Individual Tiles y Seleccion de Dificultad")
-        print("Tiles verdes indican movimientos validos")
-        print("Tiles amarillos indican celdas eliminables")
-        print("Tiles rojos = Estrategia ofensiva (>12 casillas)")
-        print("Tiles azules = Estrategia defensiva (<=12 casillas)")
+        print("Isolation Game — Individual Tiles")
+        print("Green tiles = valid moves | Yellow tiles = removable cells")
+        print("Red tiles = Offensive strategy (>12 cells) | Blue = Defensive")
+        print("Speak using NATO alphabet: alpha, bravo, charlie, delta, echo + one..five")
 
         while running:
             for event in pygame.event.get():
@@ -912,35 +1051,32 @@ class IsolationGameWithDifficulty:
                     running = False
 
                 if not self.game_started:
-                    # Handle difficulty selection
                     if not self.handle_difficulty_selection(event):
                         running = False
                 else:
-                    # Handle game events
                     if event.type == pygame.KEYDOWN:
                         if event.key == pygame.K_r and self.game_over:
                             self.reset_game()
                         elif event.key == pygame.K_d:
-                            self.game_started = False  # Return to difficulty selection
+                            self.game_started = False
                         elif event.key == pygame.K_ESCAPE:
                             running = False
 
-                    elif event.type == pygame.MOUSEBUTTONDOWN:
-                        if event.button == 1:
-                            board_pos = self.screen_to_board(event.pos)
-                            if board_pos and self.human_turn and not self.game_over:
-                                self.handle_human_move(board_pos)
+                    elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                        board_pos = self.screen_to_board(event.pos)
+                        if board_pos and self.human_turn and not self.game_over and not self.voice_thinking:
+                            self.handle_human_move(board_pos)
 
-            # Update game state
             if self.game_started and not self.game_over:
                 if self.human_turn:
                     self.update_valid_moves()
+                    # Start voice input thread once per human turn
+                    if not self.voice_thinking and not self.ai_thinking:
+                        threading.Thread(target=self.human_voice_move, daemon=True).start()
                 elif not self.ai_thinking:
                     threading.Thread(target=self.ai_move, daemon=True).start()
 
-            # Draw everything
             self.screen.fill(self.WHITE)
-
             if not self.game_started:
                 self.draw_difficulty_selection()
             else:
@@ -954,13 +1090,12 @@ class IsolationGameWithDifficulty:
 
 
 def main():
-    """Start the game with individual tiles and difficulty selection"""
     try:
         game = IsolationGameWithDifficulty()
         game.run()
     except Exception as e:
-        print(f"Error executing game: {e}")
-        print("Make sure pygame is installed correctly")
+        print(f"Error starting game: {e}")
+        print("Make sure pygame is installed: pip install pygame")
 
 if __name__ == "__main__":
     main()
